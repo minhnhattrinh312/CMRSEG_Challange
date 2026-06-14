@@ -13,8 +13,6 @@ if str(src_dir) not in sys.path:
 from segment2d import crop_resize_image, crop_resize_mask, min_max_normalize
 from natsort import natsorted
 import csv
-from natsort import natsorted
-import os
 from tqdm import tqdm
 from hydra import compose, initialize_config_dir
 from hydra.core.global_hydra import GlobalHydra
@@ -55,7 +53,7 @@ for cmr_type in cfg.CMR_MULTI.keys():
                     slice_count = 0
                     image = nib.load(image_path).get_fdata()
                     mask = nib.load(anno_path).get_fdata()
-                    image = min_max_normalize(image)
+                    image = min_max_normalize(image, cmr_type=cmr_type)
                     resize_image, restore_info = crop_resize_image(image, cfg.RESIZE_DIM)
                     resize_mask = crop_resize_mask(mask, restore_info)
 

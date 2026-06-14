@@ -135,6 +135,19 @@ class Segmenter(pl.LightningModule):
 
         return [optimizer], lr_schedulers
 
+    def freeze_model(self):
+        # freeze the encoder weights, but keep the head weights trainable
+        # unfreeze the first conv layer weights to allow the model to adapt to the new input data distribution of LGE modality
+        for name, param in self.model.named_parameters():
+            if "finalHeads" not in name:
+                param.requires_grad = False
+            if "firstconv" in name:
+                param.requires_grad = True
+
+    def unfreeze_model(self):
+        for param in self.model.parameters():
+            param.requires_grad = True
+
 
 def dice_slice(y_true, y_pred, class_index=1, smooth=1e-5):
     output_standard = torch.argmax(y_pred, dim=1, keepdim=True)

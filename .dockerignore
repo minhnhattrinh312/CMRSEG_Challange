@@ -1,0 +1,17 @@
+.git
+.agents
+.codex
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ipynb_checkpoints/
+
+data/
+input/
+output/
+wandb/
+
+*.zip
+*.tar
+*.tar.gz
