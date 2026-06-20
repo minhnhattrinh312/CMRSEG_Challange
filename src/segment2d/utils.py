@@ -23,6 +23,8 @@ def min_max_normalize(image, cmr_type="cine"):
         non_zeros = image > 0
         low, high = np.percentile(image[non_zeros], [0.05, 99.5])
     else:
+        image = np.abs(image)
+        # non_zeros = image > 0
         low, high = np.percentile(image, [0.01, 99.9])
     image = np.clip(image, low, high)
     image = (image - low) / (high - low)

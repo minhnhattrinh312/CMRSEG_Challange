@@ -30,11 +30,13 @@ with initialize_config_dir(version_base=None, config_dir=str(config_dir)):
     cfg_data = compose(config_name="data_config")
     cfg_train = compose(
         config_name="train_config",
-        overrides=["LEARNING_RATE=5e-4", "BATCH_SIZE=4", "EPOCHS=2000", "PATIENCE_LR=100", "PATIENCE_ES=500"],
+        overrides=["BATCH_SIZE=4", "EPOCHS=500", "PATIENCE_LR=50", "PATIENCE_ES=500"],
     )
 
 
 for fold in range(1, 6):
+    if fold in [1,2]:
+        continue
     print(f"training fold {fold} for LGE...")
     # validation set: fold i, training set: remaining folds
     val_files, train_files, num_classes_dict, class_weights_dict = {}, {}, {}, {}
@@ -42,7 +44,11 @@ for fold in range(1, 6):
     for key in cfg_data.CMR_MULTI.LGE_MULTI.keys():
         csv_file = pd.read_csv(csv_path / f"LGE_MULTI_{key}_info.csv")
         val_files[key] = csv_file[csv_file["fold"] == fold]["path"].tolist()
-        train_files[key] = csv_file[csv_file["fold"] != fold]["path"].tolist()
+        # repeat the training samples to increase the number of training samples for LGE
+        if key == "SAX":
+            train_files[key] = csv_file[csv_file["fold"] != fold]["path"].tolist() * 20
+        else:
+            train_files[key] = csv_file[csv_file["fold"] != fold]["path"].tolist() * 10
         num_classes_dict[key] = cfg_data.CMR_MULTI.LGE_MULTI[key].num_classes
         class_weights_dict[key] = cfg_data.CMR_MULTI.LGE_MULTI[key].class_weights
 
@@ -103,7 +109,13 @@ for fold in range(1, 6):
         verbose=True,
         save_weights_only=True,
         auto_insert_metric_name=False,
-        save_last=True,
+    )
+    check_point_epoch = ModelCheckpoint(
+        dirpath=save_dir,
+        filename="{epoch:03d}",
+        every_n_epochs=100,
+        # optional: also save last.ckpt
+        monitor=None,  # no metric ranking
     )
 
     # Initialize a LearningRateMonitor callback to log the learning rate during training
@@ -125,14 +137,14 @@ for fold in range(1, 6):
         "enable_progress_bar": True,
         # "overfit_batches" :5,
         "logger": wandb_logger,
-        "callbacks": [check_point, early_stopping, lr_monitor],
+        "callbacks": [check_point, early_stopping, lr_monitor, check_point_epoch],
         "log_every_n_steps": 1,
         "num_sanity_val_steps": 4,
         "max_epochs": cfg_train.EPOCHS,
         "precision": cfg_train.PRECISION,
     }
 
-    checkpoint_paths = glob.glob(os.path.join(saved_model_dir, "CINE_fold1/*.ckpt"))
+    checkpoint_paths = glob.glob(os.path.join(saved_model_dir, f"CINE_fold1/*.ckpt"))
     checkpoint_paths.sort()
     # If there are checkpoint paths and the load_checkpoint flag is set to True
     if checkpoint_paths and cfg_train.USE_TRANSFER_LEARNING.LGE:

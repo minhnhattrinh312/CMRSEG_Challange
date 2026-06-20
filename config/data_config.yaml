@@ -22,7 +22,7 @@ CMR_MULTI:
       num_classes: 5
       path: data/CMR-MULTI/LGE_MULTI/SAX_TR/
       path_val: input/CMR-MULTI/LGE_MULTI/SAX_VAL/
-      class_weights: [1.0, 12.0, 17.0, 17.0, 43.0] # example class weights for 5 classes
+      class_weights: [1.0, 12.0, 17.0, 50.0, 43.0] # example class weights for 5 classes
     2CH:
       num_classes: 4
       path: data/CMR-MULTI/LGE_MULTI/2CH_TR/

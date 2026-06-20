@@ -33,6 +33,7 @@ with initialize_config_dir(version_base=None, config_dir=str(config_dir)):
 
 # loop through all folder in data config
 for cmr_type in cfg.CMR_MULTI.keys():
+    # for cmr_type in ["LGE_MULTI"]:
     os.makedirs(os.path.join(save_dir, cmr_type), exist_ok=True)
     for cmr_view in cfg.CMR_MULTI[cmr_type].keys():
         os.makedirs(os.path.join(save_dir, cmr_type, cmr_view), exist_ok=True)
