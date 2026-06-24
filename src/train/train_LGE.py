@@ -7,11 +7,10 @@ import glob
 import os
 from pathlib import Path
 import sys
-import random
 import torch
 
 torch.set_float32_matmul_precision("high")
-random.seed(42)
+
 src_dir = Path(__file__).resolve().parents[1]
 if str(src_dir) not in sys.path:
     sys.path.insert(0, str(src_dir))
@@ -35,7 +34,7 @@ with initialize_config_dir(version_base=None, config_dir=str(config_dir)):
 
 
 for fold in range(1, 6):
-    if fold in [1,2]:
+    if fold not in [2]:
         continue
     print(f"training fold {fold} for LGE...")
     # validation set: fold i, training set: remaining folds
@@ -114,6 +113,7 @@ for fold in range(1, 6):
         dirpath=save_dir,
         filename="{epoch:03d}",
         every_n_epochs=100,
+        save_top_k=-1,
         # optional: also save last.ckpt
         monitor=None,  # no metric ranking
     )

@@ -135,7 +135,7 @@ if __name__ == "__main__":
             if not filename.endswith(".nii.gz"):
                 continue
             # Extract case ID from filename (assuming it's the part before .nii.gz)
-            case_id = filename.replace(".nii.gz", "")[-3:]
+            case_id = int(filename.replace(".nii.gz", "")[-3:])
             print(f"Processing case ID: {case_id} with file {filename}...")
             # The mask path is the file itself in the specific DATA_DIR
             mask_path = os.path.join(DATA_DIR, filename)

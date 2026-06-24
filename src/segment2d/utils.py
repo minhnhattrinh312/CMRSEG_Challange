@@ -353,6 +353,143 @@ def postprocess_multiclass_volume(
     return processed_volume
 
 
+import numpy as np
+from scipy.ndimage import label, binary_dilation, generate_binary_structure
+
+
+def postprocess_scar_between_lv_myo_3d(
+    pred,
+    prob=None,
+    lv_label=1,
+    myo_label=2,
+    scar_label=3,
+    min_ratio=0.03,
+    max_ratio=0.4,
+    min_scar_voxels=50,
+    min_component_voxels=5,
+    myo_dilation_iter=5,
+    lv_dilation_iter=5,
+    max_reduce_fraction=0.1,
+    require_between_lv_myo=False,
+):
+    """
+    Conservative 3D scar post-processing for CMR.
+
+    Anatomical assumption:
+        scar should be between / close to both LV cavity and LV myocardium.
+
+    Removed scar is converted to myocardium, not background.
+
+    Labels:
+        1 = LV cavity
+        2 = LV myocardium
+        3 = myocardial scar
+        4 = RV cavity
+    """
+
+    out = pred.copy()
+
+    lv = out == lv_label
+    myo = out == myo_label
+    scar = out == scar_label
+
+    scar_voxels = int(scar.sum())
+    myo_total = myo | scar
+    myo_total_voxels = int(myo_total.sum())
+
+    if scar_voxels == 0:
+        return out
+
+    if myo_total_voxels == 0:
+        out[scar] = myo_label
+        return out
+
+    scar_ratio = scar_voxels / myo_total_voxels
+
+    # --------------------------------------------------
+    # Case 1: tiny false-positive scar
+    # --------------------------------------------------
+    if scar_voxels < min_scar_voxels or scar_ratio < min_ratio:
+        out[scar] = myo_label
+        return out
+
+    # --------------------------------------------------
+    # Step 1: anatomical validity
+    # Scar should be near both LV cavity and myocardium
+    # --------------------------------------------------
+    lv_region = binary_dilation(lv, iterations=lv_dilation_iter)
+    myo_region = binary_dilation(myo, iterations=myo_dilation_iter)
+
+    if require_between_lv_myo:
+        valid_scar = scar & lv_region & myo_region
+    else:
+        valid_scar = scar & (lv_region | myo_region)
+
+    # Safety: if this removes too much, keep original scar
+    # This protects true scar patients.
+    if valid_scar.sum() < 0.5 * scar_voxels:
+        valid_scar = scar
+
+    # --------------------------------------------------
+    # Step 2: remove tiny 3D scar components
+    # --------------------------------------------------
+    structure = generate_binary_structure(3, 2)
+    cc, num = label(valid_scar, structure=structure)
+
+    cleaned_scar = np.zeros_like(valid_scar, dtype=bool)
+
+    for i in range(1, num + 1):
+        comp = cc == i
+        comp_size = int(comp.sum())
+
+        if comp_size >= min_component_voxels:
+            cleaned_scar |= comp
+
+    # Safety: if component filtering removes too much, keep original scar
+    if cleaned_scar.sum() < 0.5 * scar_voxels:
+        cleaned_scar = scar
+
+    cleaned_ratio = cleaned_scar.sum() / myo_total_voxels
+
+    # --------------------------------------------------
+    # Step 3: only reduce if scar is extremely too much
+    # --------------------------------------------------
+    if cleaned_ratio > max_ratio and prob is not None:
+        target_keep_voxels = int(max_ratio * myo_total_voxels)
+
+        # Do not remove more than max_reduce_fraction of current scar
+        min_keep_voxels = int((1.0 - max_reduce_fraction) * cleaned_scar.sum())
+        target_keep_voxels = max(target_keep_voxels, min_keep_voxels)
+
+        # Extract scar probability
+        if prob.shape[0] > scar_label and prob.shape[1:] == pred.shape:
+            scar_prob = prob[scar_label]
+        elif prob.shape[-1] > scar_label and prob.shape[:-1] == pred.shape:
+            scar_prob = prob[..., scar_label]
+        else:
+            raise ValueError("prob shape must be [C, ...] or [..., C] matching pred")
+
+        candidate_idx = np.argwhere(cleaned_scar)
+        candidate_probs = scar_prob[cleaned_scar]
+
+        order = np.argsort(candidate_probs)[::-1]
+        keep_idx = candidate_idx[order[:target_keep_voxels]]
+
+        reduced_scar = np.zeros_like(cleaned_scar, dtype=bool)
+        reduced_scar[tuple(keep_idx.T)] = True
+        cleaned_scar = reduced_scar
+
+    # --------------------------------------------------
+    # Final update:
+    # removed scar -> myocardium
+    # kept scar remains scar
+    # --------------------------------------------------
+    out[out == scar_label] = myo_label
+    out[cleaned_scar] = scar_label
+
+    return out
+
+
 # new_pred = postprocess_multiclass_volume(pred, min_size=500, hole_area=50, smooth_radius=1, keep_largest=True)
 
 # print(f"Dice Score: {dice_score(new_pred, mask, class_id=1)}")
