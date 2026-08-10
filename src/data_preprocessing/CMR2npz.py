@@ -10,7 +10,7 @@ src_dir = Path(__file__).resolve().parents[1]
 if str(src_dir) not in sys.path:
     sys.path.insert(0, str(src_dir))
 
-from segment2d import crop_resize_image, crop_resize_mask, min_max_normalize
+from segment2d import crop_resize_image, crop_resize_mask, min_max_normalize, augment_scar_only_elastic
 from natsort import natsorted
 import csv
 from tqdm import tqdm
@@ -32,8 +32,8 @@ with initialize_config_dir(version_base=None, config_dir=str(config_dir)):
     cfg = compose(config_name="data_config")
 
 # loop through all folder in data config
-for cmr_type in cfg.CMR_MULTI.keys():
-    # for cmr_type in ["LGE_MULTI"]:
+# for cmr_type in cfg.CMR_MULTI.keys():
+for cmr_type in ["LGE_MULTI"]:
     os.makedirs(os.path.join(save_dir, cmr_type), exist_ok=True)
     for cmr_view in cfg.CMR_MULTI[cmr_type].keys():
         os.makedirs(os.path.join(save_dir, cmr_type, cmr_view), exist_ok=True)
@@ -61,9 +61,27 @@ for cmr_type in cfg.CMR_MULTI.keys():
                     for i in range(resize_image.shape[-1]):
                         if np.sum(resize_mask[:, :, i]) == 0:
                             continue
-                        slice_image = resize_image[:, :, i : i + 1]
+                        slice_image = resize_image[:, :, i]
                         slice_mask = resize_mask[:, :, i]
                         slice_count += 1
                         npz_save_path = os.path.join(save_dir, cmr_type, cmr_view, f"{id_patient}_{slice_count}.npz")
-                        np.savez_compressed(npz_save_path, image=slice_image, mask=slice_mask.astype(np.uint8))
+                        np.savez_compressed(
+                            npz_save_path, image=slice_image[..., np.newaxis], mask=slice_mask.astype(np.uint8)
+                        )
                         writer.writerow({"id_patient": id_patient, "path": npz_save_path, "fold": fold})
+                        if cmr_type == "LGE_MULTI":
+                            # augment the slice_image and slice_mask if it has scar label
+                            if np.any(slice_mask == 3) and np.any(slice_mask == 2):
+                                for j in range(10):  # augment 10 times
+                                    slice_image_aug, slice_mask_aug = augment_scar_only_elastic(slice_image, slice_mask)
+                                    npz_save_path_aug = os.path.join(
+                                        save_dir, cmr_type, cmr_view, f"{id_patient}_{slice_count}_aug_{j+1}.npz"
+                                    )
+                                    np.savez_compressed(
+                                        npz_save_path_aug,
+                                        image=slice_image_aug[..., np.newaxis],
+                                        mask=slice_mask_aug.astype(np.uint8),
+                                    )
+                                    writer.writerow(
+                                        {"id_patient": id_patient, "path": npz_save_path_aug, "fold": fold + 10}
+                                    )

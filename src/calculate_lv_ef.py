@@ -8,9 +8,9 @@ from natsort import natsorted
 
 # --- Constants for Calculation ---
 LV_BLOOD_POOL_ID = 2
-PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-INPUT_DIR = os.environ.get("INPUT_DIR", os.path.join(PROJECT_ROOT, "input"))
-OUTPUT_DIR = os.environ.get("OUTPUT_DIR", os.path.join(PROJECT_ROOT, "output"))
+# PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+INPUT_DIR = os.environ.get("INPUT_DIR", "input")
+OUTPUT_DIR = os.environ.get("OUTPUT_DIR", "output")
 
 
 def create_3d_blocks(data, num_blocks):
@@ -35,6 +35,31 @@ def create_3d_blocks(data, num_blocks):
         blocks.append(data[:, :, effective_indices])
 
     return blocks
+
+
+def robust_es_ed_from_volumes(block_volumes, k=2):
+    """
+    Robustly estimate ES and ED volumes from phase volumes.
+
+    k=1 means original min/max.
+    k=2 means average 2 smallest and 2 largest.
+    k=3 means average 3 smallest and 3 largest.
+    """
+
+    vols = np.asarray(block_volumes, dtype=float)
+    vols = vols[vols > 0]
+
+    if len(vols) == 0:
+        return None, None
+
+    vols = np.sort(vols)
+
+    k = min(k, len(vols))
+
+    es_lv_vol = np.mean(vols[:k])
+    ed_lv_vol = np.mean(vols[-k:])
+
+    return es_lv_vol, ed_lv_vol
 
 
 def calculate_cine_sa_metrics_internal(cine_sa_mask_path, slice_num):
@@ -77,10 +102,10 @@ def calculate_cine_sa_metrics_internal(cine_sa_mask_path, slice_num):
         if not block_volumes:
             return None
 
-        block_volumes.sort()
-        es_lv_vol = block_volumes[0]  # Min volume
-        ed_lv_vol = block_volumes[-1]  # Max volume
-
+        # block_volumes.sort()
+        # es_lv_vol = block_volumes[0]  # Min volume
+        # ed_lv_vol = block_volumes[-1]  # Max volume
+        es_lv_vol, ed_lv_vol = robust_es_ed_from_volumes(block_volumes, k=2)
         lv_ef = ((ed_lv_vol - es_lv_vol) / ed_lv_vol * 100) if ed_lv_vol > 0 else 0
 
         return {"LV_EF": lv_ef}
@@ -95,13 +120,17 @@ def read_id_slice_sax():
         os.path.join(INPUT_DIR, "CMR-MULTI", "CINE_MULTI", "sax_slice_info_test.json"),
         os.path.join(INPUT_DIR, "CMR-MULTI", "CINE_MULTI", "sax_slice_info_valid.json"),
     ]
-    mapping_path = next((path for path in mapping_candidates if os.path.exists(path)), None)
-    if mapping_path is None:
-        print(f"Warning: no SAX slice info JSON found under {os.path.join(INPUT_DIR, 'CMR-MULTI', 'CINE_MULTI')}.")
-        return {}
-    with open(mapping_path, "r") as f:
-        id_slice = json.load(f)
-    return id_slice
+    # get all id_slice_info_valid.json, sax_slice_info_test.json, sax_slice_info_valid.json
+    id_slice_info = []
+    for mapping_path in mapping_candidates:
+        if os.path.exists(mapping_path):
+            with open(mapping_path, "r") as f:
+                id_slice_info.append(json.load(f))
+    # return union of all dictionaries
+    combined_info = {}
+    for info in id_slice_info:
+        combined_info.update(info)
+    return combined_info
 
 
 def convert_to_serializable(obj):
@@ -122,7 +151,7 @@ if __name__ == "__main__":
     DATA_DIR = os.path.join(OUTPUT_DIR, "task1_cine", "SAX")
     # Load slice info from the specified JSON
     slice_info_sax = read_id_slice_sax()
-
+    # print(f"Loaded slice info for {slice_info_sax} cases from JSON.")
     results = {}
     errors = []
 
@@ -150,9 +179,7 @@ if __name__ == "__main__":
 
             # Calculate EF
             metrics = calculate_cine_sa_metrics_internal(mask_path, slice_num)
-            patient_name = (
-                filename.replace(".nii.gz", "")
-            )  # Ensure patient name ends with a 3-digit number
+            patient_name = filename.replace(".nii.gz", "")  # Ensure patient name ends with a 3-digit number
             if metrics:
                 results[patient_name] = metrics["LV_EF"]
                 print(f"Processed {case_id}: EF = {metrics['LV_EF']:.2f}%")

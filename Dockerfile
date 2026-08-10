@@ -17,8 +17,8 @@ RUN python -m pip install --no-cache-dir \
 	pandas \
 	scikit-image \
 	scipy \
-	tqdm
-
+	tqdm \
+	SimpleITK 
 COPY . /workspace
 RUN chmod +x /workspace/src/run_submission.sh
 

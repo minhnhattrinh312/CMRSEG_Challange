@@ -10,11 +10,286 @@ from skimage.morphology import (
     closing,
     ball,
 )
+import scipy.ndimage as ndi
+import SimpleITK as sitk
 
 
-# def min_max_normalize(volume):
-#     volume = (volume - np.min(volume)) / (np.max(volume)-np.min(volume)) * 255.0
-#     return volume.astype(np.uint8)
+def anisodiff3(
+    stack,
+    niter=1,
+    kappa=50,
+    gamma=0.1,
+    step=(1.0, 1.0, 1.0),
+    option=1,
+):
+    """
+    3D Anisotropic diffusion.
+
+    Usage:
+    stackout = anisodiff(stack, niter, kappa, gamma, option)
+
+    Arguments:
+            stack  - input stack
+            niter  - number of iterations
+            kappa  - conduction coefficient 20-100 ?
+            gamma  - max value of .25 for stability
+            step   - tuple, the distance between adjacent pixels in (z,y,x)
+            option - 1 Perona Malik diffusion equation No 1
+                     2 Perona Malik diffusion equation No 2
+            ploton - if True, the middle z-plane will be plotted on every
+                 iteration
+
+    Returns:
+            stackout   - diffused stack.
+    """
+
+    # initialize output array
+    stack = stack.astype("float32")
+    stackout = stack.copy()
+
+    # initialize some internal variables
+    deltaS = np.zeros_like(stackout)
+    deltaE = deltaS.copy()
+    deltaD = deltaS.copy()
+    NS = deltaS.copy()
+    EW = deltaS.copy()
+    UD = deltaS.copy()
+    gS = np.ones_like(stackout)
+    gE = gS.copy()
+    gD = gS.copy()
+
+    for ii in range(niter):
+
+        # calculate the diffs
+        deltaD[:-1, :, :] = np.diff(stackout, axis=0)
+        deltaS[:, :-1, :] = np.diff(stackout, axis=1)
+        deltaE[:, :, :-1] = np.diff(stackout, axis=2)
+
+        # conduction gradients (only need to compute one per dim!)
+        if option == 1:
+            gD = np.exp(-((deltaD / kappa) ** 2.0)) / step[0]
+            gS = np.exp(-((deltaS / kappa) ** 2.0)) / step[1]
+            gE = np.exp(-((deltaE / kappa) ** 2.0)) / step[2]
+        elif option == 2:
+            gD = 1.0 / (1.0 + (deltaD / kappa) ** 2.0) / step[0]
+            gS = 1.0 / (1.0 + (deltaS / kappa) ** 2.0) / step[1]
+            gE = 1.0 / (1.0 + (deltaE / kappa) ** 2.0) / step[2]
+
+        # update matrices
+        D = gD * deltaD
+        E = gE * deltaE
+        S = gS * deltaS
+
+        # subtract a copy that has been shifted 'Up/North/West' by one
+        # pixel. don't as questions. just do it. trust me.
+        UD[:] = D
+        NS[:] = S
+        EW[:] = E
+        UD[1:, :, :] -= D[:-1, :, :]
+        NS[:, 1:, :] -= S[:, :-1, :]
+        EW[:, :, 1:] -= E[:, :, :-1]
+
+        # update the image
+        stackout += gamma * (UD + NS + EW)
+
+    return stackout
+
+
+def anisodiff(img, niter=1, kappa=50, gamma=0.1, step=(1.0, 1.0), option=1, ploton=False):
+
+    if img.ndim == 3:
+        warnings.warn("Only grayscale images allowed, converting to 2D matrix")
+        img = img.mean(2)
+
+    # initialize output array
+    img = img.astype("float32")
+    imgout = img.copy()
+
+    # initialize some internal variables
+    deltaS = np.zeros_like(imgout)
+    deltaE = deltaS.copy()
+    NS = deltaS.copy()
+    EW = deltaS.copy()
+    gS = np.ones_like(imgout)
+    gE = gS.copy()
+
+    for ii in range(niter):
+
+        # calculate the diffs
+        deltaS[:-1, :] = np.diff(imgout, axis=0)
+        deltaE[:, :-1] = np.diff(imgout, axis=1)
+
+        # conduction gradients (only need to compute one per dim!)
+        if option == 1:
+            gS = np.exp(-((deltaS / kappa) ** 2.0)) / step[0]
+            gE = np.exp(-((deltaE / kappa) ** 2.0)) / step[1]
+        elif option == 2:
+            gS = 1.0 / (1.0 + (deltaS / kappa) ** 2.0) / step[0]
+            gE = 1.0 / (1.0 + (deltaE / kappa) ** 2.0) / step[1]
+
+        # update matrices
+        E = gE * deltaE
+        S = gS * deltaS
+
+        # subtract a copy that has been shifted 'North/West' by one
+        # pixel.
+        NS[:] = S
+        EW[:] = E
+        NS[1:, :] -= S[:-1, :]
+        EW[:, 1:] -= E[:, :-1]
+
+        # update the image
+        imgout += gamma * (NS + EW)
+
+    return imgout
+
+
+def n4_bias_correction_3d(vol_np, mask_np=None):
+    """
+    vol_np: 3D numpy array, shape [D, H, W]
+    """
+
+    vol_np = vol_np.astype(np.float32)
+
+    img_sitk = sitk.GetImageFromArray(vol_np)
+    img_sitk = sitk.Cast(img_sitk, sitk.sitkFloat32)
+
+    if mask_np is None:
+        mask_sitk = sitk.OtsuThreshold(img_sitk, 0, 1, 200)
+    else:
+        mask_sitk = sitk.GetImageFromArray(mask_np.astype(np.uint8))
+
+    corrector = sitk.N4BiasFieldCorrectionImageFilter()
+    corrector.SetMaximumNumberOfIterations([50, 50, 30, 20])
+
+    corrected_sitk = corrector.Execute(img_sitk, mask_sitk)
+
+    return sitk.GetArrayFromImage(corrected_sitk).astype(np.float32)
+
+
+def preprocess_cmr(
+    volume: np.ndarray,
+) -> np.ndarray:
+    enhanced = anisodiff3(volume, niter=1, kappa=50, gamma=0.015, step=(1.0, 1.0, 1.0), option=1)
+    enhanced = n4_bias_correction_3d(enhanced)
+    enhanced = np.clip(enhanced, np.percentile(enhanced, 0.5), np.percentile(enhanced, 99.5))
+    enhanced = (enhanced - np.min(enhanced)) / (np.max(enhanced) - np.min(enhanced))
+    return enhanced
+
+
+import scipy.ndimage as ndi
+
+
+def augment_scar_only_elastic(
+    image,
+    mask,
+    scar_label=3,
+    myo_label=2,
+    alpha=25.0,
+    sigma=8.0,
+    roi_dilation=15,
+    myo_dilation=2,
+    boundary_sigma=1.5,
+):
+    """
+    Elastic augmentation for myocardial scar only.
+
+    image: 2D image, shape [H, W]
+    mask:  2D mask, shape [H, W]
+           1 = LV cavity
+           2 = LV myocardium
+           3 = scar
+           4 = RV cavity
+
+    Returns:
+        aug_image, aug_mask
+    """
+
+    image = image.astype(np.float32)
+    mask = mask.copy()
+
+    scar = mask == scar_label
+    myo = mask == myo_label
+
+    if scar.sum() == 0:
+        return image.copy(), mask.copy()
+
+    h, w = image.shape
+
+    # --------------------------------------------------
+    # 1. Create random smooth deformation field
+    # --------------------------------------------------
+    dx = np.random.randn(h, w).astype(np.float32)
+    dy = np.random.randn(h, w).astype(np.float32)
+
+    dx = ndi.gaussian_filter(dx, sigma=sigma)
+    dy = ndi.gaussian_filter(dy, sigma=sigma)
+
+    dx *= alpha
+    dy *= alpha
+
+    # --------------------------------------------------
+    # 2. Restrict deformation to scar neighborhood
+    # --------------------------------------------------
+    roi = ndi.binary_dilation(scar, iterations=roi_dilation)
+
+    dx *= roi
+    dy *= roi
+
+    yy, xx = np.mgrid[:h, :w].astype(np.float32)
+    coords = np.array([yy + dy, xx + dx])
+
+    # --------------------------------------------------
+    # 3. Warp scar mask
+    # --------------------------------------------------
+    scar_def = (
+        ndi.map_coordinates(
+            scar.astype(np.float32),
+            coords,
+            order=1,
+            mode="constant",
+            cval=0.0,
+        )
+        > 0.5
+    )
+
+    # --------------------------------------------------
+    # 4. Keep deformed scar anatomically valid
+    #    Scar should remain inside/near myocardium.
+    # --------------------------------------------------
+    myo_region = ndi.binary_dilation(myo | scar, iterations=myo_dilation)
+    scar_def = scar_def & myo_region
+
+    if scar_def.sum() == 0:
+        return image.copy(), mask.copy()
+    # --------------------------------------------------
+    # 5. Warp full image
+    # --------------------------------------------------
+    image_def = ndi.map_coordinates(image, coords, order=1, mode="nearest")
+
+    # --------------------------------------------------
+    # 6. Create new mask
+    # --------------------------------------------------
+    aug_mask = mask.copy()
+    aug_mask[aug_mask == scar_label] = myo_label
+    aug_mask[scar_def] = scar_label
+
+    # --------------------------------------------------
+    # 7. Smooth image transition near new scar
+    # --------------------------------------------------
+    boundary = ndi.gaussian_filter(scar_def.astype(np.float32), sigma=boundary_sigma)
+    boundary = np.clip(boundary, 0.0, 1.0)
+
+    blend_region = ndi.binary_dilation(scar | scar_def, iterations=roi_dilation)
+
+    aug_image = image.copy()
+    aug_image[blend_region] = image_def[blend_region] * boundary[blend_region] + image[blend_region] * (
+        1.0 - boundary[blend_region]
+    )
+
+    return aug_image, aug_mask
+
+
 def min_max_normalize(image, cmr_type="cine"):
     """Main pre-processing function used for the challenge (seems to work the best).
     Remove outliers voxels first, then min-max scale.
@@ -22,12 +297,16 @@ def min_max_normalize(image, cmr_type="cine"):
     if "cine" in cmr_type.lower():
         non_zeros = image > 0
         low, high = np.percentile(image[non_zeros], [0.05, 99.5])
+        image = np.clip(image, low, high)
+        image = (image - low) / (high - low)
     else:
-        image = np.abs(image)
-        # non_zeros = image > 0
-        low, high = np.percentile(image, [0.01, 99.9])
-    image = np.clip(image, low, high)
-    image = (image - low) / (high - low)
+        # image = np.abs(image)
+        # low, high = np.percentile(image, [0.01, 99.9])
+        # image = np.clip(image, low, high)
+        # image = (image - low) / (high - low)
+        ############### vs2 ###############################
+        image = preprocess_cmr(image)
+
     return image
 
 
@@ -232,16 +511,6 @@ def predict_patches(images, model, view, num_classes=4, batch_size=4, device="cu
     return probability_output.cpu().numpy()
 
 
-def predict_data_model(data, model, num_classes=4, batch_size=8, device="cuda", min_size_remove=500, fp16=False):
-    probability_output = predict_patches(
-        data["image"], model, num_classes=num_classes, batch_size=batch_size, device=device, fp16=fp16
-    )  # shape (n, num_classes, dim_resize, dim_resize)
-    seg = np.argmax(probability_output, axis=1).transpose(1, 2, 0)  # shape (dim_resize, dim_resize, n)
-    seg = remove_small_elements(seg, min_size_remove=min_size_remove)
-    invert_seg = restore_mask(seg, data["restore_info"])
-    return invert_seg
-
-
 # shape (n, num_classes, dim_resize, dim_resize)
 
 
@@ -353,7 +622,6 @@ def postprocess_multiclass_volume(
     return processed_volume
 
 
-import numpy as np
 from scipy.ndimage import label, binary_dilation, generate_binary_structure
 
 

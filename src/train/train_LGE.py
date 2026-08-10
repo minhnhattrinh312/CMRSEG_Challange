@@ -29,13 +29,11 @@ with initialize_config_dir(version_base=None, config_dir=str(config_dir)):
     cfg_data = compose(config_name="data_config")
     cfg_train = compose(
         config_name="train_config",
-        overrides=["BATCH_SIZE=4", "EPOCHS=500", "PATIENCE_LR=50", "PATIENCE_ES=500"],
+        overrides=["BATCH_SIZE=4", "EPOCHS=300", "PATIENCE_LR=50", "PATIENCE_ES=300"],
     )
 
 
-for fold in range(1, 6):
-    if fold not in [2]:
-        continue
+for fold in range(1, 2):
     print(f"training fold {fold} for LGE...")
     # validation set: fold i, training set: remaining folds
     val_files, train_files, num_classes_dict, class_weights_dict = {}, {}, {}, {}
@@ -44,10 +42,16 @@ for fold in range(1, 6):
         csv_file = pd.read_csv(csv_path / f"LGE_MULTI_{key}_info.csv")
         val_files[key] = csv_file[csv_file["fold"] == fold]["path"].tolist()
         # repeat the training samples to increase the number of training samples for LGE
+        real_mask = (csv_file["fold"] != fold) & (csv_file["fold"] < 10)
+        aug_mask = (csv_file["fold"] != (fold + 10)) & (csv_file["fold"] >= 10)
         if key == "SAX":
-            train_files[key] = csv_file[csv_file["fold"] != fold]["path"].tolist() * 20
+            train_files[key] = csv_file.loc[real_mask]["path"].tolist() * 20
+            # add augment data with fold != fold + 10
+            train_files[key] += csv_file.loc[aug_mask]["path"].tolist()
         else:
-            train_files[key] = csv_file[csv_file["fold"] != fold]["path"].tolist() * 10
+            train_files[key] = csv_file.loc[real_mask]["path"].tolist() * 10
+            # add augment data with fold != fold + 10
+            train_files[key] += csv_file.loc[aug_mask]["path"].tolist()
         num_classes_dict[key] = cfg_data.CMR_MULTI.LGE_MULTI[key].num_classes
         class_weights_dict[key] = cfg_data.CMR_MULTI.LGE_MULTI[key].class_weights
 
@@ -101,7 +105,7 @@ for fold in range(1, 6):
     # Initialize a ModelCheckpoint callback to save the model weights after each epoch
     check_point = ModelCheckpoint(
         save_dir,
-        filename="dice_{avg_val_dice:0.4f}",
+        filename="lge_{avg_val_dice:0.4f}",
         monitor="avg_val_dice",
         mode="max",
         save_top_k=cfg_train.SAVE_MODEL_TOP_K,
@@ -111,7 +115,7 @@ for fold in range(1, 6):
     )
     check_point_epoch = ModelCheckpoint(
         dirpath=save_dir,
-        filename="{epoch:03d}",
+        filename="lge_{epoch:03d}",
         every_n_epochs=100,
         save_top_k=-1,
         # optional: also save last.ckpt

@@ -71,7 +71,6 @@ def process_nii_folder(input_dir):
     input_path = Path(input_dir)
     nii_files = sorted(input_path.glob("*.nii.gz"))
 
-    rows = []
     results = {}
     for nii_file in nii_files:
         metrics = calculate_lge_sa_metrics(str(nii_file))
@@ -81,10 +80,10 @@ def process_nii_folder(input_dir):
     return results
 
 
-PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-OUTPUT_DIR = os.environ.get("OUTPUT_DIR", os.path.join(PROJECT_ROOT, "output"))
+OUTPUT_DIR = os.environ.get("OUTPUT_DIR", "./output")
+print("processing LGE mass for files in:", OUTPUT_DIR)
 DATA_DIR = os.path.join(OUTPUT_DIR, "task2_lge", "SAX")
-# DATA_DIR = "/home/nhattm/CMR-MULTI/input/CMR-MULTI/LGE_MULTI/SAX_VAL/anno/"
+# DATA_DIR = "/home/nhattm/CMRSEG_Challange/input/CMR-MULTI/LGE_MULTI/SAX_VAL/anno"
 
 
 result = process_nii_folder(DATA_DIR)

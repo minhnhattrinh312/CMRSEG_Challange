@@ -11,7 +11,9 @@ data/
 input/
 output/
 wandb/
-
+notebooks/
+ef_predictions_gt*
+mass_predictions_gt*
 *.zip
 *.tar
 *.tar.gz
